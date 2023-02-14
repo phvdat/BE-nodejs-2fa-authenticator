@@ -2,116 +2,170 @@ const express = require('express');
 const Model = require('../models/model');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const qrcode = require("qrcode");
-const speakeasy = require("speakeasy");
+const speakeasy = require('speakeasy');
 
-//register Method
 router.post('/register', async (req, res) => {
-	const hashPassword = await bcrypt.hash(req.body.password, 10);
-	const data = new Model({
-		name: req.body.name,
-		email: req.body.email,
-		password: hashPassword,
-		twoFactorEnable: false,
-		secret: '',
-	})
+  const { name, email, password } = req.body;
+  const hashPassword = await bcrypt.hash(password, 10);
+  const data = new Model({
+    name: name,
+    email: email,
+    password: hashPassword,
+    twoFactorEnable: false,
+    secret: ''
+  });
 
-	try {
-		const dataToSave = await data.save();
-		res.status(200).json(dataToSave)
-	}
-	catch (error) {
-		res.status(400).json({ message: error.message })
-	}
-})
+  try {
+    await data.save();
+    res.status(201).json({
+      status: 'success',
+      message: 'Registered successfully, please login'
+    });
+  } catch (error) {
+    res.status(400).json({ status: 'error', message: error.message });
+  }
+});
 
-
-//login Method
 router.post('/login', async (req, res) => {
-	try {
-		const user = await Model.findOne({ email: req.body.email });
-		if (!user) {
-			return res.status(400).json({ message: "Email not found" })
-		}
-		const passwordValid = await bcrypt.compare(req.body.password, user.password)
-		if (!passwordValid) {
-			return res.status(400).json({ message: "Email or password incorrect" })
-		}
-		res.status(200).json(user)
-	}
-	catch (error) {
-		res.status(500).json({ message: error.message })
-	}
-})
+  try {
+    const { email, password } = req.body;
+    const user = await Model.findOne({ email: email });
+    if (!user) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Email or password incorrect'
+      });
+    }
+    const passwordValid = await bcrypt.compare(password, user.password);
+    if (!passwordValid) {
+      return res
+        .status(404)
+        .json({ status: 'error', message: 'Email or password incorrect' });
+    }
+    res.status(200).json({
+      status: 'success',
+      user
+    });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
 
-//Update two factor: enable | disable
-router.post('/two-factor-mode/:id', async (req, res) => {
-	try {
-		const id = req.params.id;
-		const twoFactorEnable = req.body.twoFactorEnable
-		if (twoFactorEnable) {
-			const secret = await speakeasy.generateSecret();
-			await Model.findByIdAndUpdate(
-				id, {
-				twoFactorEnable: true,
-				secret: secret.base32
-			},
-			)
+router.post('/otp/generateQR', async (req, res) => {
+  try {
+    const { user_id, email } = req.body;
+    const { base32, otpauth_url } = await speakeasy.generateSecret({
+      issuer: 'wecopytrade.com',
+      name: email
+    });
+    await Model.findByIdAndUpdate(user_id, {
+      secret: base32
+    });
 
-			const qrCodeUrl = speakeasy.otpauthURL({
-				secret: secret.base32,
-				label: id,
-				algorithm: 'sha1',
-				encoding: 'base32'
-			});
+    res.status(200).json({
+      status: 'success',
+      base32,
+      otpauth_url
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
 
-			res.send({
-				success: true,
-				message: 'QR code generated',
-				qrCodeUrl: qrCodeUrl
-			});
-		}
-		else {
-			await Model.findByIdAndUpdate(
-				id, { twoFactorEnable: false }
-			)
-			res.json('disable success')
-		}
-	}
-	catch (error) {
-		res.status(500).json({ message: error.message })
-	}
-})
+router.post('/otp/verify', async (req, res) => {
+  try {
+    const { user_id, token } = req.body;
+    const user = await Model.findById(user_id);
+    if (!user) {
+      return res.status(401).json({
+        status: 'fail',
+        message: "User doesn't exist"
+      });
+    }
 
-// verify
-router.post("/verify", async (req, res) => {
-	const { userId, token } = req.body;
-	try {
-		const user = await Model.findById(userId);
-		console.log(user);
-		if (!user) {
-			return res.json('verify failed')
-		}
-		//const { base32: secret } = user.secret;
-		const verified = speakeasy.totp.verify({
-			secret: user.secret,
-			encoding: 'base32',
-			token
-		});
-		if (!verified) {
-			return res.status(401).send({
-				success: false,
-				message: 'TOTP code is incorrect'
-			});
-		}
-		res.send({
-			success: true,
-			message: 'Login successful'
-		});
-	} catch (error) {
-		console.error(error);
-		res.status(500).json({ message: 'Error retrieving user' })
-	};
-})
+    const verified = speakeasy.totp.verify({
+      secret: user.secret,
+      encoding: 'base32',
+      token
+    });
+
+    if (!verified) {
+      return res.status(401).send({
+        status: 'fail',
+        message: 'TOTP code is incorrect'
+      });
+    }
+    const updateUser = await Model.findByIdAndUpdate(user_id, {
+      twoFactorEnable: true
+    });
+    res.status(200).json({
+      status: 'success',
+      user: { ...updateUser, twoFactorEnable: true }
+    });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
+
+router.post('/otp/disable', async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    const user = await Model.findOne({ id: user_id });
+    if (!user) {
+      return res.status(401).json({
+        status: 'fail',
+        message: "User doesn't exist"
+      });
+    }
+
+    await Model.findByIdAndUpdate(user_id, { twoFactorEnable: false });
+    res.status(200).json({
+      status: 'success',
+      user: { ...user, twoFactorEnable: false }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+});
+
+router.post('/otp/validate', async (req, res) => {
+  try {
+    const { user_id, token } = req.body;
+    const user = await Model.findById(user_id);
+    const message = "Token is invalid or user doesn't exist";
+    if (!user) {
+      return res.status(401).json({
+        status: 'fail',
+        message
+      });
+    }
+
+    const validToken = speakeasy.totp.verify({
+      secret: user.secret,
+      encoding: 'base32',
+      token
+    });
+
+    if (!validToken) {
+      return res.status(401).send({
+        status: 'fail',
+        message
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      otp_valid: true
+    });
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+});
 
 module.exports = router;
