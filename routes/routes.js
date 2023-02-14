@@ -9,7 +9,7 @@ const speakeasy = require("speakeasy");
 router.post('/register', async (req, res) => {
 	const hashPassword = await bcrypt.hash(req.body.password, 10);
 	const data = new Model({
-		fullname: req.body.fullname,
+		name: req.body.name,
 		email: req.body.email,
 		password: hashPassword,
 		twoFactorEnable: false,
