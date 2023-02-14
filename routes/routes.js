@@ -98,12 +98,16 @@ router.post('/otp/verify', async (req, res) => {
         message: 'TOTP code is incorrect'
       });
     }
-    const updateUser = await Model.findByIdAndUpdate(user_id, {
-      twoFactorEnable: true
-    });
+    const userUpdate = await Model.findByIdAndUpdate(
+      user_id,
+      {
+        twoFactorEnable: true
+      },
+      { returnOriginal: false, returnDocument: true }
+    );
     res.status(200).json({
       status: 'success',
-      user: { ...updateUser, twoFactorEnable: true }
+      user: userUpdate
     });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -113,7 +117,8 @@ router.post('/otp/verify', async (req, res) => {
 router.post('/otp/disable', async (req, res) => {
   try {
     const { user_id } = req.body;
-    const user = await Model.findOne({ id: user_id });
+    const user = await Model.findById(user_id);
+
     if (!user) {
       return res.status(401).json({
         status: 'fail',
@@ -121,10 +126,14 @@ router.post('/otp/disable', async (req, res) => {
       });
     }
 
-    await Model.findByIdAndUpdate(user_id, { twoFactorEnable: false });
+    const userUpdate = await Model.findByIdAndUpdate(
+      user_id,
+      { twoFactorEnable: false },
+      { returnOriginal: false, returnDocument: true }
+    );
     res.status(200).json({
       status: 'success',
-      user: { ...user, twoFactorEnable: false }
+      user: userUpdate
     });
   } catch (error) {
     res.status(500).json({
